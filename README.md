@@ -33,10 +33,24 @@ docker run --rm --gpus all nvidia/cuda:12.6.0-base-ubuntu24.04 nvidia-smi
 - Two Docker engines were installed: `docker.io` (apt) and `docker` (snap). The snap one was serving the Docker socket.
 - The snap runs in a sandbox, so its NVIDIA hook could not reach the driver library in `/usr/lib/wsl/lib`.
 - Lesson: check which installation is actually running (`docker info`, `snap list`, `dpkg -l`) before debugging further.
-- Fix: next session (remove the snap engine, install the NVIDIA Container Toolkit).
+- Fix: see Session 2.
+
+## Session 2: GPU in Docker
+
+### Fix
+- Removed the snap engine (`snap remove --purge docker`) and kept apt `docker.io`. `--purge` skips the automatic snapshot of its data.
+- Before removing, checked what would be lost: all images, containers and volumes lived in the snap's storage (`docker info` → `/var/snap/docker/...`). Images are rebuildable; volumes are data. Nothing needed a backup (production DB is hosted, Grafana dashboard is in the repo).
+- The removal also deleted `/run/docker.sock`: the daemon was running, but the client could not connect. Fixed with `systemctl restart docker.socket docker`. Data now in `/var/lib/docker`.
+- Installed the NVIDIA Container Toolkit and registered it with `nvidia-ctk runtime configure --runtime=docker` (writes `/etc/docker/daemon.json`). The toolkit is not a driver: it exposes the host's driver and GPU to containers. In WSL the driver comes from Windows, so no Linux driver is installed.
+
+### Result
+`nvidia-smi` now runs inside a CUDA 12.6 container ([output](hardware/docker-gpu-test.txt)).
+- `KMD Version 610.78` = the kernel-mode driver (on Windows). `CUDA UMD Version 13.3` = the highest CUDA version it supports.
+- Rule: the driver's CUDA version must be ≥ the container's CUDA version (13.3 ≥ 12.6). Newer drivers run older CUDA, not the other way round.
 
 ## Roadmap
 - [x] Session 1: hardware inventory
-- [ ] Drivers: NVIDIA Container Toolkit, GPU in Docker, how drivers work on Linux servers
+- [x] Session 2: GPU in Docker (snap engine removed, NVIDIA Container Toolkit)
+- [ ] Drivers: how drivers work on Linux servers (kernel modules, DKMS, driver/CUDA versions), NVIDIA GPU Operator
 - [ ] Monitoring: Prometheus + node_exporter + GPU exporter → Grafana
 - [ ] Cloud-native: run the monitoring stack on kind/k3s
