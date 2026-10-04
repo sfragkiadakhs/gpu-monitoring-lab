@@ -1,4 +1,4 @@
-	[4mGPU0	CPU Affinity	NUMA Affinity	GPU NUMA ID[0m
+	GPU0	CPU Affinity	NUMA Affinity	GPU NUMA ID
 GPU0	 X 				N/A
 
 Legend:
