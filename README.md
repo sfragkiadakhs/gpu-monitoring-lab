@@ -48,9 +48,44 @@ docker run --rm --gpus all nvidia/cuda:12.6.0-base-ubuntu24.04 nvidia-smi
 - `KMD Version 610.78` = the kernel-mode driver (on Windows). `CUDA UMD Version 13.3` = the highest CUDA version it supports.
 - Rule: the driver's CUDA version must be ≥ the container's CUDA version (13.3 ≥ 12.6). Newer drivers run older CUDA, not the other way round.
 
+## Session 3: monitoring (Prometheus + DCGM + Grafana)
+
+### Finding: no DNS in WSL
+- `docker pull` failed: names did not resolve, but `ping 8.8.8.8` worked. So the network was fine and only DNS was broken.
+- Cause: `dnsTunneling=false` in the Windows file `%USERPROFILE%\.wslconfig`. WSL then asks a DNS proxy on the Windows host (`nameserver 172.17.176.1`), which did not answer.
+- Fix: `dnsTunneling=true` + `wsl --shutdown`. DNS queries now go through Windows' own network stack.
+- Lesson: test by IP first, then by name. That separates "network down" from "DNS down".
+
+### Stack
+All in [monitoring/](monitoring/), started with `docker compose up -d`:
+
+| Service | Port | Job |
+|---|---|---|
+| `node-exporter` | 9100 | CPU, RAM, disk, network of the machine |
+| `dcgm-exporter` | 9400 | GPU metrics via NVIDIA DCGM (`gpus: all` → NVIDIA Container Toolkit) |
+| `prometheus` | 9090 | Scrapes both exporters every 15 s and stores the time series ([config](monitoring/prometheus.yml)) |
+| `grafana` | 3000 | Dashboards. The Prometheus datasource is provisioned from a [file](monitoring/grafana/datasource.yml) |
+
+- Prometheus pulls (scrapes) from exporters. Targets are service names (`dcgm-exporter:9400`), resolved by Docker's internal DNS.
+- Dashboard: NVIDIA DCGM Exporter Dashboard (Grafana ID 12239), imported by hand for now.
+- WSL notes: node-exporter's `/:/host:ro,rslave` mount fails (`/` is not a shared mount in WSL), so it uses `/:/host:ro`. DCGM works in WSL.
+
+### Load test
+`nbody` CUDA sample (1M bodies, ~1 min) at 15:50:
+
+![GPU utilization and temperature in Grafana](monitoring/screenshots/grafana-gpu-load.png)
+
+- Utilization 0 → 100 %, temperature 39 → 63 °C, power ~45 W (= the GPU's power limit).
+
+### Finding: don't trust every number
+- Idle power showed **590 W** and **1 W** on a 45 W GPU. Values under load were realistic, so the idle readings are invalid (likely the GPU's deep power-saving state in WSL).
+- After the run, temperature stayed flat at 63 °C for 7 minutes and utilization had gaps: probably the last value repeated while the GPU slept.
+- Lesson: sanity-check metrics against physical limits. On a real server, compare with `nvidia-smi` and the BMC's power reading before trusting a dashboard.
+
 ## Roadmap
 - [x] Session 1: hardware inventory
 - [x] Session 2: GPU in Docker (snap engine removed, NVIDIA Container Toolkit)
 - [ ] Drivers: how drivers work on Linux servers (kernel modules, DKMS, driver/CUDA versions), NVIDIA GPU Operator
-- [ ] Monitoring: Prometheus + node_exporter + GPU exporter → Grafana
+- [x] Session 3: monitoring with Prometheus + node_exporter + DCGM exporter → Grafana (WSL DNS fixed first)
+- [ ] Grafana dashboard as code (provisioned JSON instead of a manual import)
 - [ ] Cloud-native: run the monitoring stack on kind/k3s
