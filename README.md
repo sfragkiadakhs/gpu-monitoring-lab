@@ -67,7 +67,7 @@ All in [monitoring/](monitoring/), started with `docker compose up -d`:
 | `grafana` | 3000 | Dashboards. The Prometheus datasource is provisioned from a [file](monitoring/grafana/datasource.yml) |
 
 - Prometheus pulls (scrapes) from exporters. Targets are service names (`dcgm-exporter:9400`), resolved by Docker's internal DNS.
-- Dashboard: NVIDIA DCGM Exporter Dashboard (Grafana ID 12239), imported by hand for now.
+- Dashboard: NVIDIA DCGM Exporter Dashboard (Grafana ID 12239), imported by hand at first; provisioned from git since Session 4.
 - WSL notes: node-exporter's `/:/host:ro,rslave` mount fails (`/` is not a shared mount in WSL), so it uses `/:/host:ro`. DCGM works in WSL.
 
 ### Load test
@@ -82,10 +82,36 @@ All in [monitoring/](monitoring/), started with `docker compose up -d`:
 - After the run, temperature stayed flat at 63 °C for 7 minutes and utilization had gaps: probably the last value repeated while the GPU slept.
 - Lesson: sanity-check metrics against physical limits. On a real server, compare with `nvidia-smi` and the BMC's power reading before trusting a dashboard.
 
+## Session 4: Grafana dashboard as code
+
+**Problem:** the dashboard lived only inside the Grafana container and was lost whenever the container was recreated.
+**Fix:** the dashboard is now a JSON file in git that Grafana loads at startup (provisioning), so it is reproducible, versioned and reviewable.
+
+```
+git repo (monitoring/grafana/)        Grafana container
+datasource.yml  ───────────────────►  /etc/grafana/provisioning/datasources/   where the data comes from
+dashboards.yml  ───────────────────►  /etc/grafana/provisioning/dashboards/    where to find dashboards
+dashboards/gpu.json  ──────────────►  /var/lib/grafana/dashboards/             the dashboard itself
+```
+
+- [dashboards.yml](monitoring/grafana/dashboards.yml) is a provider: "load every JSON in `/var/lib/grafana/dashboards` into folder GPU".
+- All mounts are read-only (`:ro`), so the container cannot change files in git. The `dashboards/` folder is mounted as a whole, so new dashboards only need a new JSON file.
+- `/etc` holds configuration and `/var` holds variable data. The provisioning path is fixed by Grafana; the dashboards path is my choice and only has to match `path:` in the provider.
+
+### Finding: the import placeholder
+- Dashboards from grafana.com contain `${DS_PROMETHEUS}` (10× here). The UI import asks which datasource to use and fills it in; provisioning loads the file as is, so the panels would show "datasource not found".
+- Fix: a fixed `uid: prometheus` in [datasource.yml](monitoring/grafana/datasource.yml), then `sed -i 's/\${DS_PROMETHEUS}/prometheus/g'` on the JSON.
+- Test: `docker compose up -d --force-recreate grafana` → logs show `finished to provision dashboards`, and the dashboard is back with data.
+
+### Finding: DNS broken again
+- Same symptom as Session 3 (ping by IP works, `getent hosts` fails), but `.wslconfig` was fine and Windows itself could resolve names.
+- Cause: an active **VPN**. WSL's DNS tunnel (`nameserver 10.255.255.254`) could not get through it. VPN off → fixed.
+- Lessons: when Windows resolves but WSL doesn't, check VPNs first. `curl -s` also hides errors; use `-sS`.
+
 ## Roadmap
 - [x] Session 1: hardware inventory
 - [x] Session 2: GPU in Docker (snap engine removed, NVIDIA Container Toolkit)
-- [ ] Drivers: how drivers work on Linux servers (kernel modules, DKMS, driver/CUDA versions), NVIDIA GPU Operator
 - [x] Session 3: monitoring with Prometheus + node_exporter + DCGM exporter → Grafana (WSL DNS fixed first)
-- [ ] Grafana dashboard as code (provisioned JSON instead of a manual import)
+- [x] Session 4: Grafana dashboard as code (provisioned JSON instead of a manual import)
 - [ ] Cloud-native: run the monitoring stack on kind/k3s
+- [ ] Summary at the top: what I built, diagram of the monitoring chain, what I learned
