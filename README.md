@@ -108,10 +108,35 @@ dashboards/gpu.json  ──────────────►  /var/lib/gra
 - Cause: an active **VPN**. WSL's DNS tunnel (`nameserver 10.255.255.254`) could not get through it. VPN off → fixed.
 - Lessons: when Windows resolves but WSL doesn't, check VPNs first. `curl -s` also hides errors; use `-sS`.
 
+## Session 5: first steps on Kubernetes (kind)
+
+**Goal:** move the monitoring stack from Docker Compose to Kubernetes. This session: a local cluster and a first Deployment.
+
+- Installed `kubectl` (v1.37) and `kind` (v0.33) as binaries in `/usr/local/bin` (manually installed tools go there, apt manages `/usr/bin`).
+- `kind create cluster --name gpu-lab` → one node, `gpu-lab-control-plane`. It shows up in `docker ps` as a container: kind = **K**ubernetes **in** **D**ocker, each node is a container. kubectl talks to the API server on the node's port 6443.
+- Why kind and not k3s: kind is built for creating and deleting test clusters on a laptop; k3s is a lightweight Kubernetes for real small servers. Same kubectl, same manifests.
+
+```
+Laptop → WSL → Docker → [kind node container] → Kubernetes → Pod (Prometheus)
+```
+
+### Self-healing test
+- `kubectl create deployment prometheus --image=prom/prometheus` → 1 Pod running.
+- Deleted the Pod → a new Pod with a new name (`…-qx66k` → `…-6chh7`) was running 5 s later. The Deployment stores the desired state (1 replica); the controller sees "1 wanted, 0 running" and creates a new Pod.
+
+### From commands to a manifest
+- `kubectl create deployment … --dry-run=client -o yaml > k8s/prometheus-deployment.yaml` writes the YAML instead of creating the object. Removed the empty placeholders (`strategy`, `resources`, `status`).
+- [k8s/prometheus-deployment.yaml](k8s/prometheus-deployment.yaml): header (`apiVersion`, `kind` = object type) → `metadata` (name, labels) → `spec` (`replicas`, `selector`) → `template` (the Pod blueprint). The template puts the label `app: prometheus` on every Pod; the selector counts Pods by that label.
+- `kubectl apply -f` makes the cluster match the file and is **idempotent**: same file → `unchanged`, `replicas: 1 → 2` → `configured` and a 2nd Pod. Same idea as dashboard as code: the desired state lives in git.
+
+### Limit: GPU in kind
+- The DCGM exporter needs the GPU, but a kind node is a container inside Docker, so passing the GPU through is extra work. For now Prometheus and Grafana move to Kubernetes; the DCGM exporter stays in Docker.
+
 ## Roadmap
 - [x] Session 1: hardware inventory
 - [x] Session 2: GPU in Docker (snap engine removed, NVIDIA Container Toolkit)
 - [x] Session 3: monitoring with Prometheus + node_exporter + DCGM exporter → Grafana (WSL DNS fixed first)
 - [x] Session 4: Grafana dashboard as code (provisioned JSON instead of a manual import)
-- [ ] Cloud-native: run the monitoring stack on kind/k3s
+- [x] Session 5: kind cluster, first Deployment (Prometheus) as a manifest, self-healing test
+- [ ] Cloud-native: run the full monitoring stack on kind (Services, Prometheus config as ConfigMap, Grafana)
 - [ ] Summary at the top: what I built, diagram of the monitoring chain, what I learned
