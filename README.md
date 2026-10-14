@@ -1,6 +1,6 @@
 # gpu-monitoring-lab
 
-Hands-on lab to learn how GPU systems are built and run: describing hardware architectures and how the components connect, GPU drivers, monitoring (Prometheus, Grafana, DCGM) and cloud-native deployment.
+Hands-on lab to learn how GPU systems are built and run: describing hardware architectures and how the components connect, GPUs in containers, monitoring (Prometheus, Grafana, DCGM) and cloud-native deployment.
 
 Setup: my laptop (i7-13620H, 16 GB RAM, RTX 4060 Laptop GPU), Ubuntu on WSL2, Docker.
 
@@ -39,7 +39,7 @@ docker run --rm --gpus all nvidia/cuda:12.6.0-base-ubuntu24.04 nvidia-smi
 
 ### Fix
 - Removed the snap engine (`snap remove --purge docker`) and kept apt `docker.io`. `--purge` skips the automatic snapshot of its data.
-- Before removing, checked what would be lost: all images, containers and volumes lived in the snap's storage (`docker info` → `/var/snap/docker/...`). Images are rebuildable; volumes are data. Nothing needed a backup (production DB is hosted, Grafana dashboard is in the repo).
+- Before removing, checked what would be lost: all images, containers and volumes lived in the snap's storage (`docker info` → `/var/snap/docker/...`). Images are rebuildable; volumes are data. Nothing needed a backup.
 - The removal also deleted `/run/docker.sock`: the daemon was running, but the client could not connect. Fixed with `systemctl restart docker.socket docker`. Data now in `/var/lib/docker`.
 - Installed the NVIDIA Container Toolkit and registered it with `nvidia-ctk runtime configure --runtime=docker` (writes `/etc/docker/daemon.json`). The toolkit is not a driver: it exposes the host's driver and GPU to containers. In WSL the driver comes from Windows, so no Linux driver is installed.
 
@@ -106,13 +106,13 @@ dashboards/gpu.json  ──────────────►  /var/lib/gra
 ### Finding: DNS broken again
 - Same symptom as Session 3 (ping by IP works, `getent hosts` fails), but `.wslconfig` was fine and Windows itself could resolve names.
 - Cause: an active **VPN**. WSL's DNS tunnel (`nameserver 10.255.255.254`) could not get through it. VPN off → fixed.
-- Lessons: when Windows resolves but WSL doesn't, check VPNs first. `curl -s` also hides errors; use `-sS`.
+- Lesson: when Windows resolves but WSL doesn't, check VPNs first.
 
 ## Session 5: first steps on Kubernetes (kind)
 
 **Goal:** move the monitoring stack from Docker Compose to Kubernetes. This session: a local cluster and a first Deployment.
 
-- Installed `kubectl` (v1.37) and `kind` (v0.33) as binaries in `/usr/local/bin` (manually installed tools go there, apt manages `/usr/bin`).
+- Installed `kubectl` (v1.37) and `kind` (v0.33) as binaries in `/usr/local/bin`.
 - `kind create cluster --name gpu-lab` → one node, `gpu-lab-control-plane`. It shows up in `docker ps` as a container: kind = **K**ubernetes **in** **D**ocker, each node is a container. kubectl talks to the API server on the node's port 6443.
 - Why kind and not k3s: kind is built for creating and deleting test clusters on a laptop; k3s is a lightweight Kubernetes for real small servers. Same kubectl, same manifests.
 
