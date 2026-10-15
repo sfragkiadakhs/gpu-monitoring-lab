@@ -1,6 +1,40 @@
 # gpu-monitoring-lab
 
-Hands-on lab to learn how GPU systems are built and run: describing hardware architectures and how the components connect, GPUs in containers, monitoring (Prometheus, Grafana, DCGM) and cloud-native deployment.
+A GPU monitoring stack I built and debugged step by step on my own laptop: GPU in Docker, metrics with NVIDIA DCGM and Prometheus, dashboards in Grafana (provisioned from git), and a first move to Kubernetes.
+
+![GPU utilization and temperature in Grafana during a load test](monitoring/screenshots/grafana-gpu-load.png)
+
+## What I built
+- **GPU in containers:** Docker + NVIDIA Container Toolkit on WSL2, verified with `nvidia-smi` inside a CUDA container.
+- **Monitoring stack** (Docker Compose): DCGM exporter (GPU) and node_exporter (CPU, RAM, disk) → Prometheus → Grafana.
+- **Dashboard as code:** the Grafana datasource and dashboard are files in git, loaded at startup. Recreating the container brings everything back with no manual clicks.
+- **Kubernetes (in progress):** a local kind cluster, Prometheus as a Deployment manifest, self-healing tested.
+
+```
+RTX 4060 ──► DCGM exporter :9400 ─┐
+                                  ├──► Prometheus :9090 ──► Grafana :3000
+CPU/RAM  ──► node_exporter :9100 ─┘    scrapes every 15 s,   dashboards from git
+                                       stores time series
+```
+
+## Run it
+Needs: an NVIDIA GPU + driver, Docker, and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). Tested on Ubuntu in WSL2.
+
+```bash
+cd monitoring
+docker compose up -d
+```
+Grafana: http://localhost:3000 (default login `admin` / `admin`) → folder **GPU**. Prometheus: http://localhost:9090.
+
+## Troubleshooting highlights
+Real problems I hit and how I found the cause:
+- **GPU not visible in Docker:** two Docker engines were installed, and the sandboxed snap one couldn't reach the driver. [→ details](#finding-gpu-in-docker-failed)
+- **No DNS in WSL:** ping by IP worked, names didn't, so I narrowed it down to DNS (a WSL setting). The second time, the cause was an active VPN. [→ 1st](#finding-no-dns-in-wsl) · [→ 2nd](#finding-dns-broken-again)
+- **Impossible metrics:** 590 W idle on a 45 W GPU. Don't trust a dashboard without checking physical limits. [→ details](#finding-dont-trust-every-number)
+- **Provisioned dashboard showed "datasource not found":** a placeholder only the UI import fills in, fixed with a fixed datasource uid. [→ details](#finding-the-import-placeholder)
+
+## Lab log
+The sessions below are the step-by-step record: what I did, what broke, and why.
 
 Setup: my laptop (i7-13620H, 16 GB RAM, RTX 4060 Laptop GPU), Ubuntu on WSL2, Docker.
 
@@ -139,4 +173,5 @@ Laptop → WSL → Docker → [kind node container] → Kubernetes → Pod (Prom
 - [x] Session 4: Grafana dashboard as code (provisioned JSON instead of a manual import)
 - [x] Session 5: kind cluster, first Deployment (Prometheus) as a manifest, self-healing test
 - [ ] Cloud-native: run the full monitoring stack on kind (Services, Prometheus config as ConfigMap, Grafana)
-- [ ] Summary at the top: what I built, diagram of the monitoring chain, what I learned
+- [x] Summary at the top: what I built, diagram, how to run it, troubleshooting highlights
+- [ ] Pin image versions (Prometheus, node_exporter, Grafana still use `latest`)
