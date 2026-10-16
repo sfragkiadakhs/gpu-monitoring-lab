@@ -48,5 +48,5 @@ docs/         details per topic + troubleshooting
 - [x] Monitoring with Prometheus + node_exporter + DCGM exporter → Grafana
 - [x] Grafana dashboard as code (provisioned from git)
 - [x] kind cluster, Prometheus Deployment as a manifest, self-healing test
-- [ ] Pin image versions (Prometheus, node_exporter, Grafana still use `latest`)
+- [x] Pinned image versions (compose + k8s), checked against the running containers
 - [ ] Run the full monitoring stack on kind (Services, Prometheus config as ConfigMap, Grafana)
