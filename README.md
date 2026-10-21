@@ -10,7 +10,7 @@ On GPU servers you need to see utilization, temperature and power to catch idle,
 - **GPU in containers:** Docker + NVIDIA Container Toolkit on WSL2, verified with `nvidia-smi` inside a CUDA container. [→ docs](docs/gpu-in-containers.md)
 - **Monitoring stack** (Docker Compose): DCGM exporter (GPU) and node_exporter (CPU, RAM, disk) → Prometheus → Grafana. [→ docs](docs/monitoring.md)
 - **Dashboard as code:** the Grafana datasource and dashboard are files in git, loaded at startup. Recreating the container brings everything back with no manual clicks. [→ docs](docs/monitoring.md#dashboard-as-code)
-- **Kubernetes (in progress):** a local kind cluster, Prometheus as a Deployment manifest, self-healing tested. [→ docs](docs/kubernetes.md)
+- **Kubernetes (in progress):** a local kind cluster, Prometheus as a Deployment manifest, self-healing tested, a Service as a fixed address in front of the Pod. [→ docs](docs/kubernetes.md)
 
 ```
 RTX 4060 ──► DCGM exporter :9400 ─┐
@@ -34,6 +34,7 @@ Real problems I hit, written up as incident reports (symptom → diagnosis → r
 - **No DNS in WSL:** ping by IP worked, names didn't, so the problem was DNS (a WSL setting). The second time, the cause was an active VPN.
 - **Impossible metrics:** 590 W idle on a 45 W GPU. Check physical limits before trusting a dashboard.
 - **Provisioned dashboard showed "datasource not found":** an import placeholder that only the UI fills in, fixed with a fixed datasource uid.
+- **kind cluster gone:** a Docker daemon restart stopped the node container, and its restart policy doesn't cover that. `sudo kubectl` was a red herring (root has no kubeconfig).
 
 ## Repo layout
 ```
@@ -49,4 +50,5 @@ docs/         details per topic + troubleshooting
 - [x] Grafana dashboard as code (provisioned from git)
 - [x] kind cluster, Prometheus Deployment as a manifest, self-healing test
 - [x] Pinned image versions (compose + k8s), checked against the running containers
-- [ ] Run the full monitoring stack on kind (Services, Prometheus config as ConfigMap, Grafana)
+- [x] Service for Prometheus (fixed address, tested by replacing the Pod)
+- [ ] Run the full monitoring stack on kind (Prometheus config as ConfigMap, Grafana)

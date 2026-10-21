@@ -7,6 +7,7 @@ Real problems I hit while building this lab, written as short incident reports.
 - [3. DNS broken again: the VPN](#3-dns-broken-again-the-vpn)
 - [4. Impossible GPU metrics](#4-impossible-gpu-metrics)
 - [5. Provisioned dashboard: "datasource not found"](#5-provisioned-dashboard-datasource-not-found)
+- [6. kind cluster gone after a Docker restart](#6-kind-cluster-gone-after-a-docker-restart)
 
 ---
 
@@ -97,3 +98,25 @@ docker run --rm --gpus all nvidia/cuda:12.6.0-base-ubuntu24.04 nvidia-smi
 **Test:** `docker compose up -d --force-recreate grafana` → logs show `finished to provision dashboards`, and the dashboard is back with data.
 
 **Lesson:** a file that works through the UI is not automatically ready for automation. Check for import-time placeholders.
+
+---
+
+## 6. kind cluster gone after a Docker restart
+
+**Symptom**
+```
+kubectl get nodes
+→ The connection to the server 127.0.0.1:46615 was refused
+```
+
+**Diagnosis**
+- First attempt with `sudo kubectl` failed differently: `localhost:8080`. That is kubectl's default when it has **no kubeconfig**. sudo runs as root, and root has no `~/.kube/config`. A red herring: kubectl never needs sudo here.
+- Without sudo, kubectl tried the right address (from the kind context), but nothing answered.
+- In kind each node is a container: `docker ps -a` → `gpu-lab-control-plane  Exited`.
+- `systemctl show docker --property=ActiveEnterTimestamp` → the Docker daemon had restarted 2 s after the container stopped.
+
+**Root cause:** the Docker daemon restarted (trigger unknown) and stopped all containers. The kind node has restart policy `on-failure`, which does not restart a container when the daemon restarts.
+
+**Fix:** `docker start gpu-lab-control-plane`. After ~20 s the node was `Ready` and the Prometheus Pod was running again (same Pod, restart count +1, **new IP**).
+
+**Lesson:** on a laptop, a kind cluster lives only as long as its node container. Check the container first (`docker ps -a`). The new Pod IP is also why Prometheus now has a Service in front of it.
