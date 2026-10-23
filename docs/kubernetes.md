@@ -1,6 +1,6 @@
 # Kubernetes (in progress)
 
-**Goal:** move the monitoring stack from Docker Compose to Kubernetes. Done so far: a local cluster, Prometheus as a Deployment, and a Service in front of it.
+**Goal:** move the monitoring stack from Docker Compose to Kubernetes. Done so far: a local cluster, Prometheus as a Deployment, a Service in front of it, and its config from a ConfigMap.
 
 ## Cluster: kind
 - `kind create cluster --name gpu-lab` → one node, `gpu-lab-control-plane`.
@@ -35,6 +35,20 @@ Deleted the running Pod → a new Pod with a new name was running 5 s later. The
 | Endpoints (`kubectl get endpointslices`) | 10.244.0.4:9090 | 10.244.0.6:9090 |
 
 Two controllers, two jobs: the Deployment replaces the Pod, the Service updates where traffic goes. Grafana will connect to `prometheus:9090` and never see the change.
+
+## Config as a ConfigMap
+**Problem:** the image ships a default `prometheus.yml`. In Compose I mounted my own file from the laptop; in a cluster a Pod can run on any node, so there is no laptop folder to rely on.
+
+- The config file goes into the cluster as a **ConfigMap** (a Kubernetes object that stores configuration apart from the image): generated with `kubectl create configmap prometheus-config --from-file=… --dry-run=client -o yaml`, saved as [k8s/prometheus-configmap.yaml](../k8s/prometheus-configmap.yaml).
+- The Deployment mounts it in two parts: `volumes` (Pod level: **what** is available, filled from the ConfigMap) and `volumeMounts` (container level: **where** it appears, `/etc/prometheus`). The volume name links the two.
+
+```
+ConfigMap prometheus-config ──► volume "config" (Pod) ──► /etc/prometheus/prometheus.yml (container)
+```
+
+- `kubectl apply` → a **new Pod** (rollout): a running Pod can't change shape, so the Deployment replaced it with one that matches the new template.
+- **Check:** `kubectl port-forward svc/prometheus 9090:9090` → `localhost:9090/targets` lists my jobs `node` and `gpu`, so Prometheus reads the ConfigMap.
+- **Result: both targets DOWN**, as expected at this stage: `lookup dcgm-exporter on 10.96.0.10:53: no such host`. Port 53 = DNS, `10.96.0.10` = the cluster DNS (CoreDNS). The DNS works, but it only knows the cluster's Services; the names `dcgm-exporter` and `node-exporter` came from the Compose network. **Next:** make the exporters reachable from the cluster.
 
 ## Limit: GPU in kind
 The DCGM exporter needs the GPU, but a kind node is a container inside Docker, so passing the GPU through is extra work. Plan: Prometheus and Grafana move to Kubernetes, the DCGM exporter stays in Docker for now.

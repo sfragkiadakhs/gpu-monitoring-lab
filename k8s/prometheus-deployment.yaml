@@ -17,3 +17,10 @@ spec:
       containers:
       - image: prom/prometheus:v3.15.0
         name: prometheus
+        volumeMounts:
+        - name: config
+          mountPath: /etc/prometheus
+      volumes:
+      - name: config
+        configMap:
+          name: prometheus-config

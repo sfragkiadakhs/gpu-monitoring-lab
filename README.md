@@ -10,7 +10,7 @@ On GPU servers you need to see utilization, temperature and power to catch idle,
 - **GPU in containers:** Docker + NVIDIA Container Toolkit on WSL2, verified with `nvidia-smi` inside a CUDA container. [→ docs](docs/gpu-in-containers.md)
 - **Monitoring stack** (Docker Compose): DCGM exporter (GPU) and node_exporter (CPU, RAM, disk) → Prometheus → Grafana. [→ docs](docs/monitoring.md)
 - **Dashboard as code:** the Grafana datasource and dashboard are files in git, loaded at startup. Recreating the container brings everything back with no manual clicks. [→ docs](docs/monitoring.md#dashboard-as-code)
-- **Kubernetes (in progress):** a local kind cluster, Prometheus as a Deployment manifest, self-healing tested, a Service as a fixed address in front of the Pod. [→ docs](docs/kubernetes.md)
+- **Kubernetes (in progress):** a local kind cluster, Prometheus as a Deployment manifest, self-healing tested, a Service as a fixed address in front of the Pod, the Prometheus config mounted from a ConfigMap. [→ docs](docs/kubernetes.md)
 
 ```
 RTX 4060 ──► DCGM exporter :9400 ─┐
@@ -51,4 +51,5 @@ docs/         details per topic + troubleshooting
 - [x] kind cluster, Prometheus Deployment as a manifest, self-healing test
 - [x] Pinned image versions (compose + k8s), checked against the running containers
 - [x] Service for Prometheus (fixed address, tested by replacing the Pod)
-- [ ] Run the full monitoring stack on kind (Prometheus config as ConfigMap, Grafana)
+- [x] Prometheus config as a ConfigMap (mounted, verified on the Targets page)
+- [ ] Run the full monitoring stack on kind (exporters reachable from the cluster, Grafana)
