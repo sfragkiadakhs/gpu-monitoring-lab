@@ -1,6 +1,6 @@
 # Kubernetes (in progress)
 
-**Goal:** move the monitoring stack from Docker Compose to Kubernetes. Done so far: a local cluster, Prometheus as a Deployment, a Service in front of it, and its config from a ConfigMap.
+**Goal:** move the monitoring stack from Docker Compose to Kubernetes. Done so far: a local cluster, Prometheus as a Deployment, a Service in front of it, its config from a ConfigMap, and node_exporter as a DaemonSet (target UP).
 
 ## Cluster: kind
 - `kind create cluster --name gpu-lab` → one node, `gpu-lab-control-plane`.
@@ -50,5 +50,15 @@ ConfigMap prometheus-config ──► volume "config" (Pod) ──► /etc/prome
 - **Check:** `kubectl port-forward svc/prometheus 9090:9090` → `localhost:9090/targets` lists my jobs `node` and `gpu`, so Prometheus reads the ConfigMap.
 - **Result: both targets DOWN**, as expected at this stage: `lookup dcgm-exporter on 10.96.0.10:53: no such host`. Port 53 = DNS, `10.96.0.10` = the cluster DNS (CoreDNS). The DNS works, but it only knows the cluster's Services; the names `dcgm-exporter` and `node-exporter` came from the Compose network. **Next:** make the exporters reachable from the cluster.
 
+## node_exporter as a DaemonSet
+**Problem:** node_exporter measures the machine it runs on (CPU, RAM, disk), so every node needs its own copy. A Deployment runs N copies on any node; a **DaemonSet** runs **one copy on every node**, and a new node gets one automatically.
+
+- [k8s/node-exporter-daemonset.yaml](../k8s/node-exporter-daemonset.yaml): the same settings as in Compose. `hostPID: true` (= `pid: host`), the node's root folder mounted read-only at `/host` via `hostPath` (= `/:/host:ro`), `--path.rootfs=/host`. Image pinned to the Compose tag `v1.12.1`.
+- [k8s/node-exporter-service.yaml](../k8s/node-exporter-service.yaml): a Service named `node-exporter`, port 9100. The ConfigMap already scrapes `node-exporter:9100`, so the config needed no change: the Service makes that name exist in the cluster.
+- The first `kubectl apply` failed with `strict decoding error: unknown field "spec.template.spec.containers[0].images"`: the path in the error points to the exact line (a typo, `images` instead of `image`).
+- **Result:** Targets page → `node` **UP**, `gpu` still DOWN.
+- **Lab limitation:** kind has one node, so one node_exporter Pod. That node is a Docker container, so the disk numbers are that container's filesystem; CPU and RAM come from the shared WSL kernel.
+- **In production** I'd install the kube-prometheus-stack Helm chart, which ships node_exporter as a DaemonSet. Writing the manifests by hand here is for understanding each piece.
+
 ## Limit: GPU in kind
-The DCGM exporter needs the GPU, but a kind node is a container inside Docker, so passing the GPU through is extra work. Plan: Prometheus and Grafana move to Kubernetes, the DCGM exporter stays in Docker for now.
+The DCGM exporter needs the GPU, but a kind node is a container inside Docker, so passing the GPU through is extra work. Plan: Prometheus and Grafana move to Kubernetes, the DCGM exporter stays in Docker for now. (On real GPU clusters the NVIDIA GPU Operator runs dcgm-exporter as a DaemonSet on every GPU node.)
