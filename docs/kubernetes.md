@@ -1,6 +1,6 @@
 # Kubernetes (in progress)
 
-**Goal:** move the monitoring stack from Docker Compose to Kubernetes. Done so far: a local cluster, Prometheus as a Deployment, a Service in front of it, its config from a ConfigMap, and node_exporter as a DaemonSet (target UP).
+**Goal:** move the monitoring stack from Docker Compose to Kubernetes. Done so far: a local cluster, Prometheus as a Deployment, a Service in front of it, its config from a ConfigMap, node_exporter as a DaemonSet, and the DCGM exporter (still in Docker) reachable from the cluster: both targets UP. Next: Grafana.
 
 ## Cluster: kind
 - `kind create cluster --name gpu-lab` → one node, `gpu-lab-control-plane`.
@@ -60,5 +60,28 @@ ConfigMap prometheus-config ──► volume "config" (Pod) ──► /etc/prome
 - **Lab limitation:** kind has one node, so one node_exporter Pod. That node is a Docker container, so the disk numbers are that container's filesystem; CPU and RAM come from the shared WSL kernel.
 - **In production** I'd install the kube-prometheus-stack Helm chart, which ships node_exporter as a DaemonSet. Writing the manifests by hand here is for understanding each piece.
 
-## Limit: GPU in kind
-The DCGM exporter needs the GPU, but a kind node is a container inside Docker, so passing the GPU through is extra work. Plan: Prometheus and Grafana move to Kubernetes, the DCGM exporter stays in Docker for now. (On real GPU clusters the NVIDIA GPU Operator runs dcgm-exporter as a DaemonSet on every GPU node.)
+## DCGM exporter: in Docker, reachable from the cluster
+**Problem:** the DCGM exporter needs the GPU, but a kind node is a container inside Docker, so passing the GPU through to a Pod is extra work. So DCGM stays in Docker Compose, and Prometheus in the cluster has to reach `dcgm-exporter:9400` by name. It couldn't: the container was only on the Compose network (`monitoring_default`), the kind node on the `kind` network.
+
+- **Fix:** DCGM joins the `kind` Docker network (kind creates it with the first cluster). First tested by hand with `docker network connect --alias dcgm-exporter kind monitoring-dcgm-exporter-1`, then written into [docker-compose.yml](../monitoring/docker-compose.yml) so it survives a recreate: the service lists `networks: [default, kind]`, and `kind` is declared `external: true` (it exists already; Compose must not create it). Compose registers the service name as a DNS name on every network it joins.
+- **Only DCGM runs in Compose now:** Prometheus and node_exporter run in the cluster; starting the whole Compose stack would run them twice.
+
+**How the name resolves** (checked hop by hop from the Prometheus Pod):
+```
+Prometheus Pod   /etc/resolv.conf → nameserver 10.96.0.10
+  ▼
+kube-dns Service → 2 CoreDNS Pods (kube-system)
+  │  name ends in cluster.local? → answer from the cluster's Services (node-exporter → 10.96.88.156)
+  │  otherwise → forward to the node's /etc/resolv.conf
+  ▼
+kind node        nameserver 172.22.0.1 = Docker's DNS on the kind network
+  ▼
+dcgm-exporter → 172.22.0.3
+```
+- `nslookup` (busybox) in the Pod kept saying `can't find dcgm-exporter` even after the fix: with `ndots:5` it only tried the search suffixes (`…svc.cluster.local`, `.home`), never the plain name. `nslookup dcgm-exporter.` (trailing dot = full name, no suffixes) returned 172.22.0.3. **Lesson:** check that the test tool resolves names the way the application does before calling DNS broken.
+- **Result:** Targets page → `gpu` and `node` both **UP**.
+
+![Prometheus on kind: targets gpu and node UP](../monitoring/screenshots/kind-targets-up.png)
+
+- **Lab limitation:** the cluster depends on a container outside it, joined by Docker networking; `docker compose up` needs the kind cluster (and its network) to exist first.
+- **In production** the NVIDIA GPU Operator runs dcgm-exporter as a DaemonSet on every GPU node, and Prometheus finds it through Kubernetes service discovery.
