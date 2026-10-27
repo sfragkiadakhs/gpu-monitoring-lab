@@ -10,7 +10,7 @@ On GPU servers you need to see utilization, temperature and power to catch idle,
 - **GPU in containers:** Docker + NVIDIA Container Toolkit on WSL2, verified with `nvidia-smi` inside a CUDA container. [→ docs](docs/gpu-in-containers.md)
 - **Monitoring stack** (Docker Compose): DCGM exporter (GPU) and node_exporter (CPU, RAM, disk) → Prometheus → Grafana. [→ docs](docs/monitoring.md)
 - **Dashboard as code:** the Grafana datasource and dashboard are files in git, loaded at startup. Recreating the container brings everything back with no manual clicks. [→ docs](docs/monitoring.md#dashboard-as-code)
-- **Kubernetes (in progress):** a local kind cluster, Prometheus as a Deployment manifest, self-healing tested, a Service as a fixed address in front of the Pod, the Prometheus config mounted from a ConfigMap, node_exporter as a DaemonSet (one per node), and the DCGM exporter (kept in Docker for the GPU) joined to the cluster's network, so Prometheus on Kubernetes scrapes both. [→ docs](docs/kubernetes.md)
+- **Kubernetes (in progress):** a local kind cluster, Prometheus as a Deployment manifest, self-healing tested, a Service as a fixed address in front of the Pod, the Prometheus config mounted from a ConfigMap, node_exporter as a DaemonSet (one per node), and the DCGM exporter (kept in Docker for the GPU) joined to the cluster's network, so Prometheus on Kubernetes scrapes both, and Grafana on the cluster with its datasource and dashboard from ConfigMaps (dashboard as code, same `gpu.json`). [→ docs](docs/kubernetes.md) · [architecture](docs/architecture.md)
 
 ```
 RTX 4060 ──► DCGM exporter :9400 ─┐
@@ -23,12 +23,13 @@ CPU/RAM  ──► node_exporter :9100 ─┘    scrapes every 15 s,   dashboard
 Needs: an NVIDIA GPU + driver, Docker, and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). Tested on Ubuntu in WSL2.
 
 ```bash
-kind create cluster --name gpu-lab   # creates the "kind" Docker network that Compose joins
-cd monitoring
-docker compose up -d
+kind create cluster --name gpu-lab                        # creates the "kind" Docker network that Compose joins
+(cd monitoring && docker compose up -d dcgm-exporter)     # only the GPU exporter stays in Docker
+kubectl apply -f k8s/                                     # Prometheus, node_exporter, Grafana + ConfigMaps
+kubectl port-forward svc/grafana 3000:3000
 ```
 The DCGM exporter joins the `kind` network so Prometheus on Kubernetes can scrape it ([details](docs/kubernetes.md#dcgm-exporter-in-docker-reachable-from-the-cluster)).
-Grafana: http://localhost:3000 (default login `admin` / `admin`, change it on first login) → folder **GPU**. Prometheus: http://localhost:9090.
+Grafana: http://localhost:3000 (default login `admin` / `admin`, change it on first login) → folder **GPU**. Prometheus: `kubectl port-forward svc/prometheus 9090:9090` → http://localhost:9090.
 
 ## Troubleshooting highlights
 Real problems I hit, written up as incident reports (symptom → diagnosis → root cause → fix → lesson) in [docs/troubleshooting.md](docs/troubleshooting.md):
@@ -56,4 +57,5 @@ docs/         details per topic + troubleshooting
 - [x] Prometheus config as a ConfigMap (mounted, verified on the Targets page)
 - [x] node_exporter as a DaemonSet + Service on kind (target UP)
 - [x] DCGM exporter reachable from the cluster (Compose joins the `kind` network, target UP)
-- [ ] Grafana on kind
+- [x] Grafana on kind (datasource, provider and dashboard as ConfigMaps)
+- [ ] README final

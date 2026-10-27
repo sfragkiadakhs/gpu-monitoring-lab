@@ -1,6 +1,6 @@
 # Kubernetes (in progress)
 
-**Goal:** move the monitoring stack from Docker Compose to Kubernetes. Done so far: a local cluster, Prometheus as a Deployment, a Service in front of it, its config from a ConfigMap, node_exporter as a DaemonSet, and the DCGM exporter (still in Docker) reachable from the cluster: both targets UP. Next: Grafana.
+**Goal:** move the monitoring stack from Docker Compose to Kubernetes. Done so far: a local cluster, Prometheus as a Deployment, a Service in front of it, its config from a ConfigMap, node_exporter as a DaemonSet, the DCGM exporter (still in Docker) reachable from the cluster (both targets UP), and Grafana with its datasource and dashboard from ConfigMaps.
 
 ## Cluster: kind
 - `kind create cluster --name gpu-lab` → one node, `gpu-lab-control-plane`.
@@ -85,3 +85,31 @@ dcgm-exporter → 172.22.0.3
 
 - **Lab limitation:** the cluster depends on a container outside it, joined by Docker networking; `docker compose up` needs the kind cluster (and its network) to exist first.
 - **In production** the NVIDIA GPU Operator runs dcgm-exporter as a DaemonSet on every GPU node, and Prometheus finds it through Kubernetes service discovery.
+
+## Grafana: dashboard as code on Kubernetes
+**Problem:** in Compose, Grafana got its provisioning files as mounts from the laptop folder. In a cluster there is no laptop folder, so the same three files go in as ConfigMaps, the pattern already used for Prometheus.
+
+| ConfigMap | made from | mounted at | path chosen by |
+|---|---|---|---|
+| [grafana-datasources](../k8s/grafana-datasources.yaml) | `monitoring/grafana/datasource.yml` | `/etc/grafana/provisioning/datasources` | Grafana (fixed folder) |
+| [grafana-dashboard-provider](../k8s/grafana-dashboard-provider.yaml) | `monitoring/grafana/dashboards.yml` | `/etc/grafana/provisioning/dashboards` | Grafana (fixed folder) |
+| [grafana-dashboards](../k8s/grafana-dashboards.yaml) | `monitoring/grafana/dashboards/` (folder → one key per file, `gpu.json`) | `/var/lib/grafana/dashboards` | me: must match `path:` in the provider |
+
+- Each made with `kubectl create configmap <name> --from-file=<file or folder> --dry-run=client -o yaml > k8s/<name>.yaml` (`-o` is the output **format**; the file comes from the shell redirect).
+- Grafana's fixed provisioning folders, checked in the image itself: `docker run --rm --entrypoint ls grafana/grafana:13.1.1 /etc/grafana/provisioning`.
+- The **provider** is a pointer, not a dashboard: "load the JSON files in this folder into the UI folder *GPU*". If the dashboards mount were missing, Grafana would still start, with an empty dashboard list. So the proof is a dashboard with data, not a Running Pod.
+- [k8s/grafana-deployment.yaml](../k8s/grafana-deployment.yaml): image pinned to the Compose tag `13.1.1`, three `volumes` (type `configMap`) and three `volumeMounts`, each pair linked by the volume name. [k8s/grafana-service.yaml](../k8s/grafana-service.yaml): Service `grafana`, port 3000.
+- The datasource file was reused unchanged: `url: http://prometheus:9090` matches the Service name and port of Prometheus in the cluster, and CoreDNS resolves the name.
+
+**Check:**
+```
+$ kubectl get pods,svc -l app=grafana
+NAME                           READY   STATUS    RESTARTS   AGE
+pod/grafana-584f5f8775-g7l4j   1/1     Running   0          15m
+
+NAME              TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)    AGE
+service/grafana   ClusterIP   10.96.26.253   <none>        3000/TCP   15m
+```
+`kubectl port-forward svc/grafana 3000:3000` → `localhost:3000` → folder **GPU**: the same dashboard as in Compose, with live GPU and node data. It looks identical because it is loaded from the same `gpu.json`.
+
+- **In production** I'd install the kube-prometheus-stack Helm chart: its Grafana picks up dashboards from labelled ConfigMaps automatically and stores the admin password in a Secret. Writing it by hand here shows what the chart does.
