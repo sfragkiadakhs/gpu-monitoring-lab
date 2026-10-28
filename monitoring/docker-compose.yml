@@ -21,6 +21,7 @@ services:
   dcgm-exporter:
     image: nvcr.io/nvidia/k8s/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04
     gpus: all
+    restart: unless-stopped
     cap_add:
       - SYS_ADMIN
     ports:

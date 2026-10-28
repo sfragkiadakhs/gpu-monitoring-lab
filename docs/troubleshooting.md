@@ -8,6 +8,7 @@ Real problems I hit while building this lab, written as short incident reports.
 - [4. Impossible GPU metrics](#4-impossible-gpu-metrics)
 - [5. Provisioned dashboard: "datasource not found"](#5-provisioned-dashboard-datasource-not-found)
 - [6. kind cluster gone after a Docker restart](#6-kind-cluster-gone-after-a-docker-restart)
+- [7. Empty GPU dashboard after a laptop restart](#7-empty-gpu-dashboard-after-a-laptop-restart)
 
 ---
 
@@ -120,3 +121,20 @@ kubectl get nodes
 **Fix:** `docker start gpu-lab-control-plane`. After ~20 s the node was `Ready` and the Prometheus Pod was running again (same Pod, restart count +1, **new IP**).
 
 **Lesson:** on a laptop, a kind cluster lives only as long as its node container. Check the container first (`docker ps -a`). The new Pod IP is also why Prometheus now has a Service in front of it.
+
+## 7. Empty GPU dashboard after a laptop restart
+
+**Symptom:** Grafana on kind showed "No data" on every GPU panel.
+
+**Diagnosis**
+- `kubectl get pods`: Grafana, Prometheus and node-exporter were `Running` (RESTARTS +1, 5 h ago). Kubernetes had brought them back by itself.
+- `docker ps`: only the kind node. The DCGM exporter, which runs in Compose, was not there.
+- `docker-compose.yml`: the DCGM service had no `restart:` policy.
+
+**Root cause:** the laptop restart also restarted Docker. Without a restart policy, Compose containers stay stopped.
+
+**Fix:** `restart: unless-stopped` on the DCGM service, then `docker compose up -d dcgm-exporter`. Checked with `docker inspect -f '{{.HostConfig.RestartPolicy.Name}}'` → `unless-stopped`. GPU panels filled again after ~1 min.
+
+**Lesson:** Pods come back by themselves; plain containers only with a restart policy. And nothing told me the exporter was down. That needs an alert on targets that go down.
+
+**Found on the way:** the Prometheus graph `up{job="node"}` over 1 week started 5 h ago. Prometheus has no data volume, so every container restart starts the history from zero (→ PersistentVolume, see the README's "In production" section).

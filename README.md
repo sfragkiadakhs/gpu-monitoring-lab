@@ -1,6 +1,6 @@
 # gpu-monitoring-lab
 
-On GPU servers you need to see utilization, temperature and power to catch idle, overloaded or overheating GPUs. This is a GPU monitoring stack I built and debugged step by step on my own laptop: GPU in Docker, metrics with NVIDIA DCGM and Prometheus, dashboards in Grafana provisioned from git, and a first move to Kubernetes.
+On GPU servers you need to see utilization, temperature and power to catch idle, overloaded or overheating GPUs. This is a GPU monitoring stack I built and debugged step by step on my own laptop: GPU in Docker, metrics with NVIDIA DCGM and Prometheus, dashboards in Grafana provisioned from git, first on Docker Compose, then moved to Kubernetes (kind).
 
 **Tech:** Linux · Docker / Docker Compose · NVIDIA Container Toolkit · DCGM · Prometheus · Grafana · Kubernetes (kind) · WSL2
 
@@ -8,16 +8,35 @@ On GPU servers you need to see utilization, temperature and power to catch idle,
 
 ## What I built
 - **GPU in containers:** Docker + NVIDIA Container Toolkit on WSL2, verified with `nvidia-smi` inside a CUDA container. [→ docs](docs/gpu-in-containers.md)
-- **Monitoring stack** (Docker Compose): DCGM exporter (GPU) and node_exporter (CPU, RAM, disk) → Prometheus → Grafana. [→ docs](docs/monitoring.md)
+- **Monitoring stack, first version** (Docker Compose): DCGM exporter (GPU) and node_exporter (CPU, RAM, disk) → Prometheus → Grafana. [→ docs](docs/monitoring.md)
 - **Dashboard as code:** the Grafana datasource and dashboard are files in git, loaded at startup. Recreating the container brings everything back with no manual clicks. [→ docs](docs/monitoring.md#dashboard-as-code)
-- **Kubernetes (in progress):** a local kind cluster, Prometheus as a Deployment manifest, self-healing tested, a Service as a fixed address in front of the Pod, the Prometheus config mounted from a ConfigMap, node_exporter as a DaemonSet (one per node), and the DCGM exporter (kept in Docker for the GPU) joined to the cluster's network, so Prometheus on Kubernetes scrapes both, and Grafana on the cluster with its datasource and dashboard from ConfigMaps (dashboard as code, same `gpu.json`). [→ docs](docs/kubernetes.md) · [architecture](docs/architecture.md)
+- **Kubernetes (kind):** the same stack as manifests in git. [→ docs](docs/kubernetes.md) · [architecture](docs/architecture.md)
+  - **Prometheus:** Deployment + Service (fixed address; self-healing tested by deleting the Pod), config mounted from a ConfigMap.
+  - **node_exporter:** DaemonSet, so every node runs one.
+  - **Grafana:** datasource, provider and dashboard from ConfigMaps (same `gpu.json` as in Compose).
+  - **DCGM exporter:** stays in Docker, because kind can't pass the GPU into its node container. Compose joins the cluster's Docker network, so Prometheus scrapes it by name.
 
+```mermaid
+flowchart TB
+  user([Browser])
+  subgraph kind["kind cluster"]
+    grafana[Grafana]
+    prometheus[Prometheus]
+    node[node-exporter]
+  end
+  subgraph docker["Docker Compose"]
+    dcgm[DCGM exporter]
+  end
+  gpu[(RTX 4060)]
+  host[(CPU / RAM / disk)]
+  user -->|port-forward| grafana
+  grafana -->|queries| prometheus
+  prometheus -->|scrapes| node
+  prometheus -->|scrapes| dcgm
+  node -->|reads| host
+  dcgm -->|reads| gpu
 ```
-RTX 4060 ──► DCGM exporter :9400 ─┐
-                                  ├──► Prometheus :9090 ──► Grafana :3000
-CPU/RAM  ──► node_exporter :9100 ─┘    scrapes every 15 s,   dashboards from git
-                                       stores time series
-```
+Prometheus scrapes every 15 s and stores time series; Grafana's datasource and dashboard come from git. Addresses, ports and networks: [architecture](docs/architecture.md).
 
 ## Run it
 Needs: an NVIDIA GPU + driver, Docker, and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). Tested on Ubuntu in WSL2.
@@ -38,6 +57,14 @@ Real problems I hit, written up as incident reports (symptom → diagnosis → r
 - **Impossible metrics:** 590 W idle on a 45 W GPU. Check physical limits before trusting a dashboard.
 - **Provisioned dashboard showed "datasource not found":** an import placeholder that only the UI fills in, fixed with a fixed datasource uid.
 - **kind cluster gone:** a Docker daemon restart stopped the node container, and its restart policy doesn't cover that. `sudo kubectl` was a red herring (root has no kubeconfig).
+- **Empty GPU dashboard after a laptop restart:** the Pods came back by themselves, the DCGM container in Compose didn't (no restart policy). Fixed with `restart: unless-stopped`.
+
+## In production I'd…
+- **Keep the metrics:** store Prometheus data on a PersistentVolume. Here it lives inside the container: after a laptop restart, the graph started 5 hours ago, not 5 days.
+- **Alert, not only watch:** Alertmanager rules for a target that goes down or a GPU that runs hot. Here the DCGM exporter stayed stopped after a restart and only an empty dashboard showed it.
+- **Run the GPU exporter in the cluster:** the NVIDIA GPU Operator installs the device plugin and the DCGM exporter on every GPU node (kind can't pass the GPU through).
+- **Keep secrets out of git:** the Grafana admin password from a Kubernetes Secret, not the default login.
+- **Install with Helm** (kube-prometheus-stack) instead of hand-written manifests. I wrote them by hand here to learn each piece.
 
 ## Repo layout
 ```
@@ -58,4 +85,5 @@ docs/         details per topic + troubleshooting
 - [x] node_exporter as a DaemonSet + Service on kind (target UP)
 - [x] DCGM exporter reachable from the cluster (Compose joins the `kind` network, target UP)
 - [x] Grafana on kind (datasource, provider and dashboard as ConfigMaps)
-- [ ] README final
+- [x] Restart policy for the DCGM exporter (comes back after a Docker restart)
+- [x] README final (architecture diagram, "In production I'd…")
