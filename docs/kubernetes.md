@@ -5,7 +5,7 @@
 ## Cluster: kind
 - `kind create cluster --name gpu-lab` → one node, `gpu-lab-control-plane`.
 - kind = **K**ubernetes **in** **D**ocker: each node is a container (visible in `docker ps`). kubectl talks to the API server on the node's port 6443.
-- Why kind: built for creating and deleting test clusters on a laptop. k3s would be the choice for real small servers; kubectl and the manifests are the same.
+- Why kind: built for creating and deleting test clusters on a laptop. k3s would be the choice for real small servers. kubectl and the manifests are the same.
 
 ```
 Laptop → WSL → Docker → [kind node container] → Kubernetes → Pod (Prometheus)
@@ -13,8 +13,8 @@ Laptop → WSL → Docker → [kind node container] → Kubernetes → Pod (Prom
 
 ## Prometheus as a manifest
 - Generated with `kubectl create deployment … --dry-run=client -o yaml`, then cleaned up: [k8s/prometheus-deployment.yaml](../k8s/prometheus-deployment.yaml).
-- The Deployment holds the desired state (`replicas: 1`). Its Pod template puts the label `app: prometheus` on every Pod; the selector counts Pods by that label.
-- `kubectl apply -f` makes the cluster match the file and is **idempotent**: same file → `unchanged`; `replicas: 1 → 2` → `configured` and a second Pod. Same idea as dashboard as code: the desired state lives in git.
+- The Deployment holds the desired state (`replicas: 1`). Its Pod template puts the label `app: prometheus` on every Pod, and the selector counts Pods by that label.
+- `kubectl apply -f` makes the cluster match the file and is **idempotent**: same file → `unchanged`, `replicas: 1 → 2` → `configured` and a second Pod. Same idea as dashboard as code: the desired state lives in git.
 
 ## Self-healing test
 Deleted the running Pod → a new Pod with a new name was running 5 s later. The controller saw "1 wanted, 0 running" and created a replacement.
@@ -37,7 +37,7 @@ Deleted the running Pod → a new Pod with a new name was running 5 s later. The
 Two controllers, two jobs: the Deployment replaces the Pod, the Service updates where traffic goes. Grafana will connect to `prometheus:9090` and never see the change.
 
 ## Config as a ConfigMap
-**Problem:** the image ships a default `prometheus.yml`. In Compose I mounted my own file from the laptop; in a cluster a Pod can run on any node, so there is no laptop folder to rely on.
+**Problem:** the image ships a default `prometheus.yml`. In Compose I mounted my own file from the laptop. In a cluster a Pod can run on any node, so there is no laptop folder to rely on.
 
 - The config file goes into the cluster as a **ConfigMap** (a Kubernetes object that stores configuration apart from the image): generated with `kubectl create configmap prometheus-config --from-file=… --dry-run=client -o yaml`, saved as [k8s/prometheus-configmap.yaml](../k8s/prometheus-configmap.yaml).
 - The Deployment mounts it in two parts: `volumes` (Pod level: **what** is available, filled from the ConfigMap) and `volumeMounts` (container level: **where** it appears, `/etc/prometheus`). The volume name links the two.
@@ -48,23 +48,23 @@ ConfigMap prometheus-config ──► volume "config" (Pod) ──► /etc/prome
 
 - `kubectl apply` → a **new Pod** (rollout): a running Pod can't change shape, so the Deployment replaced it with one that matches the new template.
 - **Check:** `kubectl port-forward svc/prometheus 9090:9090` → `localhost:9090/targets` lists my jobs `node` and `gpu`, so Prometheus reads the ConfigMap.
-- **Result: both targets DOWN**, as expected at this stage: `lookup dcgm-exporter on 10.96.0.10:53: no such host`. Port 53 = DNS, `10.96.0.10` = the cluster DNS (CoreDNS). The DNS works, but it only knows the cluster's Services; the names `dcgm-exporter` and `node-exporter` came from the Compose network. **Next:** make the exporters reachable from the cluster.
+- **Result: both targets DOWN**, as expected at this stage: `lookup dcgm-exporter on 10.96.0.10:53: no such host`. Port 53 = DNS, `10.96.0.10` = the cluster DNS (CoreDNS). The DNS works, but it only knows the cluster's Services. The names `dcgm-exporter` and `node-exporter` came from the Compose network. **Next:** make the exporters reachable from the cluster.
 
 ## node_exporter as a DaemonSet
-**Problem:** node_exporter measures the machine it runs on (CPU, RAM, disk), so every node needs its own copy. A Deployment runs N copies on any node; a **DaemonSet** runs **one copy on every node**, and a new node gets one automatically.
+**Problem:** node_exporter measures the machine it runs on (CPU, RAM, disk), so every node needs its own copy. A Deployment runs N copies on any node. A **DaemonSet** runs **one copy on every node**, and a new node gets one automatically.
 
 - [k8s/node-exporter-daemonset.yaml](../k8s/node-exporter-daemonset.yaml): the same settings as in Compose. `hostPID: true` (= `pid: host`), the node's root folder mounted read-only at `/host` via `hostPath` (= `/:/host:ro`), `--path.rootfs=/host`. Image pinned to the Compose tag `v1.12.1`.
 - [k8s/node-exporter-service.yaml](../k8s/node-exporter-service.yaml): a Service named `node-exporter`, port 9100. The ConfigMap already scrapes `node-exporter:9100`, so the config needed no change: the Service makes that name exist in the cluster.
 - The first `kubectl apply` failed with `strict decoding error: unknown field "spec.template.spec.containers[0].images"`: the path in the error points to the exact line (a typo, `images` instead of `image`).
 - **Result:** Targets page → `node` **UP**, `gpu` still DOWN.
-- **Lab limitation:** kind has one node, so one node_exporter Pod. That node is a Docker container, so the disk numbers are that container's filesystem; CPU and RAM come from the shared WSL kernel.
+- **Lab limitation:** kind has one node, so one node_exporter Pod. That node is a Docker container, so the disk numbers are that container's filesystem. CPU and RAM come from the shared WSL kernel.
 - **In production** I'd install the kube-prometheus-stack Helm chart, which ships node_exporter as a DaemonSet. Writing the manifests by hand here is for understanding each piece.
 
 ## DCGM exporter: in Docker, reachable from the cluster
 **Problem:** the DCGM exporter needs the GPU, but a kind node is a container inside Docker, so passing the GPU through to a Pod is extra work. So DCGM stays in Docker Compose, and Prometheus in the cluster has to reach `dcgm-exporter:9400` by name. It couldn't: the container was only on the Compose network (`monitoring_default`), the kind node on the `kind` network.
 
-- **Fix:** DCGM joins the `kind` Docker network (kind creates it with the first cluster). First tested by hand with `docker network connect --alias dcgm-exporter kind monitoring-dcgm-exporter-1`, then written into [docker-compose.yml](../monitoring/docker-compose.yml) so it survives a recreate: the service lists `networks: [default, kind]`, and `kind` is declared `external: true` (it exists already; Compose must not create it). Compose registers the service name as a DNS name on every network it joins.
-- **Only DCGM runs in Compose now:** Prometheus and node_exporter run in the cluster; starting the whole Compose stack would run them twice.
+- **Fix:** DCGM joins the `kind` Docker network (kind creates it with the first cluster). First tested by hand with `docker network connect --alias dcgm-exporter kind monitoring-dcgm-exporter-1`, then written into [docker-compose.yml](../monitoring/docker-compose.yml) so it survives a recreate: the service lists `networks: [default, kind]`, and `kind` is declared `external: true` (it exists already, so Compose must not create it). Compose registers the service name as a DNS name on every network it joins.
+- **Only DCGM runs in Compose now:** Prometheus and node_exporter run in the cluster. Starting the whole Compose stack would run them twice.
 
 **How the name resolves** (checked hop by hop from the Prometheus Pod):
 ```
@@ -83,7 +83,7 @@ dcgm-exporter → 172.22.0.3
 
 ![Prometheus on kind: targets gpu and node UP](../monitoring/screenshots/kind-targets-up.png)
 
-- **Lab limitation:** the cluster depends on a container outside it, joined by Docker networking; `docker compose up` needs the kind cluster (and its network) to exist first.
+- **Lab limitation:** the cluster depends on a container outside it, joined by Docker networking. `docker compose up` needs the kind cluster (and its network) to exist first.
 - **In production** the NVIDIA GPU Operator runs dcgm-exporter as a DaemonSet on every GPU node, and Prometheus finds it through Kubernetes service discovery.
 
 ## Grafana: dashboard as code on Kubernetes
@@ -95,7 +95,7 @@ dcgm-exporter → 172.22.0.3
 | [grafana-dashboard-provider](../k8s/grafana-dashboard-provider.yaml) | `monitoring/grafana/dashboards.yml` | `/etc/grafana/provisioning/dashboards` | Grafana (fixed folder) |
 | [grafana-dashboards](../k8s/grafana-dashboards.yaml) | `monitoring/grafana/dashboards/` (folder → one key per file, `gpu.json`) | `/var/lib/grafana/dashboards` | me: must match `path:` in the provider |
 
-- Each made with `kubectl create configmap <name> --from-file=<file or folder> --dry-run=client -o yaml > k8s/<name>.yaml` (`-o` is the output **format**; the file comes from the shell redirect).
+- Each made with `kubectl create configmap <name> --from-file=<file or folder> --dry-run=client -o yaml > k8s/<name>.yaml` (`-o` is the output **format**, the file comes from the shell redirect).
 - Grafana's fixed provisioning folders, checked in the image itself: `docker run --rm --entrypoint ls grafana/grafana:13.1.1 /etc/grafana/provisioning`.
 - The **provider** is a pointer, not a dashboard: "load the JSON files in this folder into the UI folder *GPU*". If the dashboards mount were missing, Grafana would still start, with an empty dashboard list. So the proof is a dashboard with data, not a Running Pod.
 - [k8s/grafana-deployment.yaml](../k8s/grafana-deployment.yaml): image pinned to the Compose tag `13.1.1`, three `volumes` (type `configMap`) and three `volumeMounts`, each pair linked by the volume name. [k8s/grafana-service.yaml](../k8s/grafana-service.yaml): Service `grafana`, port 3000.

@@ -135,6 +135,6 @@ kubectl get nodes
 
 **Fix:** `restart: unless-stopped` on the DCGM service, then `docker compose up -d dcgm-exporter`. Checked with `docker inspect -f '{{.HostConfig.RestartPolicy.Name}}'` → `unless-stopped`. GPU panels filled again after ~1 min.
 
-**Lesson:** Pods come back by themselves; plain containers only with a restart policy. And nothing told me the exporter was down. That needs an alert on targets that go down.
+**Lesson:** Pods come back by themselves, plain containers only with a restart policy. And nothing told me the exporter was down. That needs an alert on targets that go down.
 
 **Found on the way:** the Prometheus graph `up{job="node"}` over 1 week started 5 h ago. Prometheus has no data volume, so every container restart starts the history from zero (→ PersistentVolume, see the README's "In production" section).

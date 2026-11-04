@@ -11,7 +11,7 @@ On GPU servers you need to see utilization, temperature and power to catch idle,
 - **Monitoring stack, first version** (Docker Compose): DCGM exporter (GPU) and node_exporter (CPU, RAM, disk) → Prometheus → Grafana. [→ docs](docs/monitoring.md)
 - **Dashboard as code:** the Grafana datasource and dashboard are files in git, loaded at startup. Recreating the container brings everything back with no manual clicks. [→ docs](docs/monitoring.md#dashboard-as-code)
 - **Kubernetes (kind):** the same stack as manifests in git. [→ docs](docs/kubernetes.md) · [architecture](docs/architecture.md)
-  - **Prometheus:** Deployment + Service (fixed address; self-healing tested by deleting the Pod), config mounted from a ConfigMap.
+  - **Prometheus:** Deployment + Service (fixed address, self-healing tested by deleting the Pod), config mounted from a ConfigMap.
   - **node_exporter:** DaemonSet, so every node runs one.
   - **Grafana:** datasource, provider and dashboard from ConfigMaps (same `gpu.json` as in Compose).
   - **DCGM exporter:** stays in Docker, because kind can't pass the GPU into its node container. Compose joins the cluster's Docker network, so Prometheus scrapes it by name.
@@ -36,7 +36,7 @@ flowchart TB
   node -->|reads| host
   dcgm -->|reads| gpu
 ```
-Prometheus scrapes every 15 s and stores time series; Grafana's datasource and dashboard come from git. Addresses, ports and networks: [architecture](docs/architecture.md).
+Prometheus scrapes every 15 s and stores time series. Grafana's datasource and dashboard come from git. Addresses, ports and networks: [architecture](docs/architecture.md).
 
 ## Run it
 Needs: an NVIDIA GPU + driver, Docker, and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). Tested on Ubuntu in WSL2.
@@ -61,7 +61,7 @@ Real problems I hit, written up as incident reports (symptom → diagnosis → r
 
 ## In production I'd…
 - **Keep the metrics:** store Prometheus data on a PersistentVolume. Here it lives inside the container: after a laptop restart, the graph started 5 hours ago, not 5 days.
-- **Alert, not only watch:** Alertmanager rules for a target that goes down or a GPU that runs hot. Here the DCGM exporter stayed stopped after a restart and only an empty dashboard showed it.
+- **Alerting:** Alertmanager rules for a target that goes down or a GPU that runs hot. Here the DCGM exporter stayed stopped after a restart and only an empty dashboard showed it.
 - **Run the GPU exporter in the cluster:** the NVIDIA GPU Operator installs the device plugin and the DCGM exporter on every GPU node (kind can't pass the GPU through).
 - **Keep secrets out of git:** the Grafana admin password from a Kubernetes Secret, not the default login.
 - **Install with Helm** (kube-prometheus-stack) instead of hand-written manifests. I wrote them by hand here to learn each piece.

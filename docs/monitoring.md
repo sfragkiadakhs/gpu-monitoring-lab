@@ -23,9 +23,9 @@ Every image has an exact tag, so `docker compose up` starts the same software ne
 | `nvcr.io/nvidia/k8s/dcgm-exporter` | `4.5.2-4.8.1-ubuntu22.04` |
 
 - Versions taken from the running containers (`docker exec <container> prometheus --version`), so the pin locks in what already worked.
-- Tag names ≠ version numbers: Prometheus and node-exporter tags start with `v`, Grafana's don't. Checked on Docker Hub; `docker compose pull` fails if a tag doesn't exist.
+- Tag names ≠ version numbers: Prometheus and node-exporter tags start with `v`, Grafana's don't. Checked on Docker Hub. `docker compose pull` fails if a tag doesn't exist.
 - A tag can still be re-pushed: the local `grafana:latest` and `grafana:13.1.1` were the same version but different builds (one day apart). Only a digest (`image@sha256:…`) is fully immutable.
-- `docker compose up -d` recreated only the 3 changed services; `dcgm-exporter` kept running. Dashboard still loads.
+- `docker compose up -d` recreated only the 3 changed services, `dcgm-exporter` kept running. Dashboard still loads.
 
 ## Load test
 `nbody` CUDA sample (1M bodies, ~1 min):
